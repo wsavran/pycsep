@@ -629,7 +629,7 @@ def plot_basemap(basemap, extent, ax=None,  coastline=True, borders=False, linec
 
     return ax
 
-def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, plot_args=None):
+def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, plot_args=None, draw_basemap=False):
     """ Plot catalog in a region
 
     Args:
@@ -694,7 +694,10 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
     coastline = plot_args.get('coastline', True)
     borders = plot_args.get('borders', False)
     linewidth = plot_args.get('linewidth', True)
+    frameon = plot_args.get('frameon', True)
     linecolor = plot_args.get('linecolor', 'black')
+    legend_facecolor = plot_args.get('legend_facecolor', 'white')
+    legend_titlesize = plot_args.get('legend_titlesize', 14)
 
 
     bbox = catalog.get_bbox()
@@ -717,18 +720,20 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
         n_lats = len(catalog.region.ys) // 2
         central_latitude = catalog.region.ys[n_lats]
 
-    # Instantiage GeoAxes object
+    # Instantiate GeoAxes object
     if ax is None:
+        draw_basemap = True
         fig = pyplot.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection=projection)
 
-    if set_global:
-        ax.set_global()
-    else:
-        ax.set_extent(extents=extent, crs=ccrs.PlateCarree())  # Defined extent always in lat/lon
+    if draw_basemap:
+        if set_global:
+            ax.set_global()
+        else:
+            ax.set_extent(extents=extent, crs=ccrs.PlateCarree())  # Defined extent always in lat/lon
 
-    # Basemap plotting
-    ax = plot_basemap(basemap, extent, ax=ax, coastline=coastline, borders=borders,
+        # Basemap plotting
+        ax = plot_basemap(basemap, extent, ax=ax, coastline=coastline, borders=borders,
                       linecolor=linecolor, linewidth=linewidth, projection=projection, apprx=apprx,
                       central_latitude=central_latitude)
 
@@ -736,7 +741,7 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
     mw_range = [min(catalog.get_magnitudes()), max(catalog.get_magnitudes())]
     def size_map(markersize, values, scale):
         if isinstance(mag_scale, (int, float)):
-            return (markersize/(scale**mw_range[0]) * numpy.power(values, scale))
+            return (markersize / (scale**mw_range[0]) * numpy.power(values, scale))
         elif isinstance(scale, (numpy.ndarray, list)):
             return scale
         else:
@@ -747,6 +752,7 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
                            s=size_map(markersize, catalog.get_magnitudes(), mag_scale),
                            transform=cartopy.crs.PlateCarree(),
                            color=markercolor,
+                           edgecolors='black',
                            alpha=alpha)
 
     # Legend
@@ -761,8 +767,9 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
                                                   num=list(size_map(markersize, mag_ticks, mag_scale)),
                                                   alpha=0.3)
         ax.legend(handles, numpy.round(mag_ticks, 1),
-                  loc=legend_loc, title=r"Magnitudes", title_fontsize=16,
-                  labelspacing=labelspacing, handletextpad=5, framealpha=False)
+                  loc=legend_loc, title=r"Magnitudes", title_fontsize=legend_titlesize,
+                  labelspacing=labelspacing, handletextpad=5, framealpha=0.8,
+                  facecolor=legend_facecolor, frameon=frameon)
 
     if region_border:
         try:
@@ -774,7 +781,7 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
 
     # Gridline options
     if grid:
-        gl = ax.gridlines(draw_labels=grid_labels, alpha=0.5)
+        gl = ax.gridlines(draw_labels=grid_labels, alpha=0.5, color='black')
         gl.right_labels = False
         gl.top_labels = False
         gl.xformatter = LONGITUDE_FORMATTER
@@ -790,7 +797,7 @@ def plot_catalog(catalog, ax=None, show=False, extent=None, set_global=False, pl
 
     return ax
 
-def plot_spatial_dataset(gridded, region, ax=None, show=False, extent=None, set_global=False, plot_args=None):
+def plot_spatial_dataset(gridded, region=None, ax=None, show=False, extent=None, set_global=False, plot_args=None):
     """ Plot spatial dataset such as data from a gridded forecast
 
     Args:
@@ -826,6 +833,11 @@ def plot_spatial_dataset(gridded, region, ax=None, show=False, extent=None, set_
 
     """
     # Get spatial information for plotting
+    if region is None:
+        try:
+            region = gridded.region
+        except AttributeError:
+            raise AttributeError("gridded data set must have region information or provide region as argument.")
     bbox = region.get_bbox()
     if extent is None:
         extent = [bbox[0], bbox[1], bbox[2] + region.dh, bbox[3] + region.dh]
@@ -836,6 +848,7 @@ def plot_spatial_dataset(gridded, region, ax=None, show=False, extent=None, set_
     figsize = plot_args.get('figsize', None)
     title = plot_args.get('title', None)
     title_size = plot_args.get('title_size', None)
+    catalog = plot_args.get('catalog', None)
     filename = plot_args.get('filename', None)
     # cartopy properties
     projection = plot_args.get('projection', ccrs.PlateCarree(central_longitude=0.0))
@@ -895,6 +908,10 @@ def plot_spatial_dataset(gridded, region, ax=None, show=False, extent=None, set_
 
     im = ax.pcolor(lons, lats, gridded, cmap=cmap, alpha=alpha, snap=True, transform=ccrs.PlateCarree())
     im.set_clim(clim)
+
+    # Plot catalog if desired
+    if catalog:
+        ax = plot_catalog(catalog, ax=ax, extent=extent, draw_basemap=False, plot_args=plot_args)
 
     # Colorbar options
     # create an axes on the right side of ax. The width of cax will be 5%

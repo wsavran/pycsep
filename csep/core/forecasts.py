@@ -442,7 +442,7 @@ class GriddedForecast(MarkedGriddedDataSet):
                                           show=show, extent=extent, set_global=set_global, plot_args=plot_args)
         else:
             plot_args.setdefault('clabel', f'M{self.min_magnitude}+ rate per {str(dh)}° x {str(dh)}° per {time}')
-            ax = plot_spatial_dataset(self.spatial_counts(cartesian=True), self.region, ax=ax,show=show, extent=extent,
+            ax = plot_spatial_dataset(self.spatial_counts(cartesian=True), self.region, ax=ax, show=show, extent=extent,
                                       set_global=set_global, plot_args=plot_args)
         return ax
 
@@ -454,7 +454,8 @@ class CatalogForecast(LoggingMixin):
                  filter_spatial=False, filters=None, apply_mct=False,
                  region=None, expected_rates=None, start_time=None, end_time=None,
                  n_cat=None, event=None, loader=None, catalog_type='ascii',
-                 catalog_format='native', store=True, apply_filters=False):
+                 catalog_format='native', store=True, apply_filters=False, verbose=True,
+                 record_stats=True):
 
 
         """
@@ -491,11 +492,16 @@ class CatalogForecast(LoggingMixin):
         # used for labeling plots, filenames, etc, should be human readable
         self.name = name
 
+        # output statements about processing
+        self.verbose = verbose
+
         # path to forecast location
         self.filename = filename
 
         # should be iterable
         self.catalogs = catalogs or []
+
+        # this is used to buffer catalogs
         self._catalogs = []
 
         # should be a generator function
@@ -527,6 +533,30 @@ class CatalogForecast(LoggingMixin):
         self.start_time = start_time
         self.end_time = end_time
 
+        self._record_stats = record_stats
+
+        # if filters are not assigned, try and build them from region
+        # idea: space-magnitude class that could return filters
+        if not self.filters and self.apply_filters:
+            if self.verbose:
+                print('Attempting to create filters from region')
+            filters = []
+            if self.start_time:
+                start_epoch = datetime_to_utc_epoch(self.start_time)
+                filters.append(f'origin_time >= {start_epoch}')
+            if self.end_time:
+                end_epoch = datetime_to_utc_epoch(self.end_time)
+                filters.append(f'origin_time < {end_epoch}')
+            if self.region:
+                try:
+                    min_mw = self.region.magnitudes.min()
+                    filters.append(f'magnitude >= {min_mw}')
+                except AttributeError:
+                    pass
+            self.filters = filters
+        if self.verbose:
+            print(f'Using the following filters: {filters}')
+
         # stores catalogs in memory
         self.store = store
 
@@ -540,9 +570,17 @@ class CatalogForecast(LoggingMixin):
         # used to handle the iteration over catalogs
         self._idx = 0
 
+        # write settings used to generate object
+        if self.verbose:
+            if self.apply_mct:
+                print()
+
         # load catalogs if catalogs aren't provided, this might be a generator
         if not self.catalogs:
             self._load_catalogs()
+
+        # stores event counts, if more stats are desired add here
+        self.event_counts = []
 
     def __iter__(self):
         return self
@@ -575,6 +613,7 @@ class CatalogForecast(LoggingMixin):
                 else:
                     self.catalogs = self._catalogs
                     del self._catalogs
+                    self._catalogs = []
                     if self.apply_filters:
                         self.apply_filters = False
 
@@ -591,8 +630,16 @@ class CatalogForecast(LoggingMixin):
             if self.filter_spatial:
                 catalog = catalog.filter_spatial(self.region)
 
+        # check if we store the catalogs
         if is_generator and self.store:
             self._catalogs.append(catalog)
+
+        # used to record some statistics of catalogs on iteration; on by default
+        if self._record_stats:
+            try:
+                self.event_counts.append(catalog.event_count)
+            except AttributeError:
+                pass
 
         # return potentially filtered data
         return catalog
@@ -649,6 +696,8 @@ class CatalogForecast(LoggingMixin):
             raise AttributeError("Forecast must have space-magnitude regions to compute expected rates.")
         # need to compute expected rates, else return.
         if self.expected_rates is None:
+            if self.verbose:
+                print('Computing expected rates')
             t0 = time.time()
             data = numpy.empty([])
             for i, cat in enumerate(self):
@@ -660,7 +709,7 @@ class CatalogForecast(LoggingMixin):
                 else:
                     data += numpy.array(gridded_counts)
                 # output status
-                if verbose:
+                if verbose or self.verbose:
                     tens_exp = numpy.floor(numpy.log10(i + 1))
                     if (i + 1) % 10 ** tens_exp == 0:
                         t1 = time.time()
@@ -671,10 +720,10 @@ class CatalogForecast(LoggingMixin):
                                                   magnitudes=self.magnitudes, name=self.name)
             return self.expected_rates
 
-    def plot(self, plot_args = None, **kwargs):
+    def plot(self, plot_args=None, **kwargs):
         plot_args = plot_args or {}
         if self.expected_rates is None:
-            self.get_expected_rates()
+            self.get_expected_rates(verbose=self.verbose)
         args_dict = {'title': self.name,
                      'grid_labels': True,
                      'grid': True,
@@ -715,3 +764,11 @@ class CatalogForecast(LoggingMixin):
               :class:`csep.core.forecasts.CatalogForecast
         """
         raise NotImplementedError("load_ascii is not implemented!")
+
+    def get_event_counts(self):
+        """Returns numpy array with event counts from each catalog. """
+        if self.event_counts:
+            event_counts = numpy.array(self.event_counts)
+        else:
+            event_counts = numpy.array([cat.event_count for cat in self])
+        return event_counts
